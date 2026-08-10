@@ -13,6 +13,15 @@ def dice_iou(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5
     expected_total = expected.sum(dim=dimensions, dtype=torch.float32)
     union = (predictions | expected).sum(dim=dimensions, dtype=torch.float32)
 
-    dice = (2 * intersection + 1.0) / (prediction_total + expected_total + 1.0)
-    iou = (intersection + 1.0) / (union + 1.0)
+    both_empty = (prediction_total == 0) & (expected_total == 0)
+    dice = torch.where(
+        both_empty,
+        torch.ones_like(intersection),
+        (2 * intersection) / (prediction_total + expected_total),
+    )
+    iou = torch.where(
+        both_empty,
+        torch.ones_like(intersection),
+        intersection / union,
+    )
     return {"dice": dice.mean().item(), "iou": iou.mean().item()}

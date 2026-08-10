@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from steel_inspection.config import CLASS_NAMES
+from steel_inspection.config import CLASS_NAMES, IMAGE_SIZE
 from steel_inspection.data.rle import decode_rle
 
 
@@ -22,8 +22,10 @@ class SteelDefectDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         split: str,
         image_size: tuple[int, int],
     ) -> None:
+        if image_size != IMAGE_SIZE:
+            raise ValueError(f"image_size must be {IMAGE_SIZE}, got {image_size}")
         self.image_dir = Path(image_dir)
-        self.image_size = image_size
+        self.image_size = IMAGE_SIZE
         with Path(manifest_path).open(newline="", encoding="utf-8") as handle:
             self.rows = [row for row in csv.DictReader(handle) if row["split"] == split]
 

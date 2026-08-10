@@ -3,6 +3,7 @@ import csv
 import cv2
 import numpy as np
 import torch
+import pytest
 
 from steel_inspection.training.dataset import SteelDefectDataset
 
@@ -53,3 +54,8 @@ def test_dataset_returns_rgb_tensor_and_four_masks(tmp_path):
     assert mask.dtype == torch.float32
     assert mask[0, 0, 0].item() == 1.0
     assert mask[1:].sum().item() == 0.0
+
+
+def test_dataset_rejects_geometry_other_than_fixed_model_size(tmp_path):
+    with pytest.raises(ValueError, match="image_size must be"):
+        SteelDefectDataset(tmp_path / "manifest.csv", tmp_path, "train", (32, 64))
