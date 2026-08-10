@@ -2,8 +2,8 @@
 .superpowers/
 
 # Local datasets and generated model outputs
-data/
-artifacts/
+/data/
+/artifacts/
 
 # Python environments, caches, and local secrets
 .venv/
