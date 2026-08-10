@@ -1,2 +1,14 @@
 .worktrees/
 .superpowers/
+
+# Local datasets and generated model outputs
+data/
+artifacts/
+
+# Python environments, caches, and local secrets
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.env
