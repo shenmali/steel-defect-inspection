@@ -1,6 +1,7 @@
 """FastAPI application exposing one image-segmentation endpoint."""
 
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -36,6 +37,13 @@ def create_app(model_path: Path, backend: str = "pytorch") -> FastAPI:
     app = FastAPI(title="Steel Defect Inspection API", lifespan=lifespan)
     app.state.predictor = None
     app.state.backend_error = None
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        """Report readiness without exposing implementation details."""
+        if app.state.backend_error is not None or app.state.predictor is None:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model backend is unavailable")
+        return {"status": "ok"}
 
     @app.post("/predict")
     async def predict(image: UploadFile = File(...)) -> dict[str, object]:
@@ -97,4 +105,4 @@ def _response_payload(result: PredictionResult, annotated_path: Path) -> dict[st
     }
 
 
-app = create_app(Path("artifacts/checkpoints/best.pt"))
+app = create_app(Path(os.environ.get("STEEL_INSPECTION_MODEL", "artifacts/checkpoints/best.pt")))

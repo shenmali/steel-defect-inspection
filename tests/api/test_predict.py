@@ -69,6 +69,10 @@ def test_predict_rejects_non_image(client: TestClient):
     assert response.status_code == 415
 
 
+def test_health_reports_ready_backend(client: TestClient):
+    assert client.get("/health").json() == {"status": "ok"}
+
+
 def test_predict_rejects_corrupt_image_data(client: TestClient):
     """Catches image decoding errors that would otherwise become server errors."""
     response = client.post("/predict", files={"image": ("broken.png", b"not a PNG", "image/png")})
