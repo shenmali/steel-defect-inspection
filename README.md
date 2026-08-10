@@ -4,7 +4,7 @@ An individual learning project that demonstrates GPU-accelerated steel-surface d
 
 ## Prerequisites
 
-Use 64-bit PowerShell and Python 3.11 or 3.12. NVIDIA GPU inference requires a compatible driver and CUDA 12.1-compatible PyTorch.
+Use 64-bit PowerShell and Python 3.10, 3.11, or 3.12. NVIDIA GPU inference requires a compatible driver and CUDA 12.1-compatible PyTorch.
 
 ## Setup and test
 
