@@ -6,7 +6,8 @@ from pathlib import Path
 
 from steel_inspection.config import CLASS_NAMES
 
-_INPUT_COLUMNS = {"ImageId_ClassId", "EncodedPixels"}
+_COMBINED_INPUT_COLUMNS = {"ImageId_ClassId", "EncodedPixels"}
+_SEPARATE_INPUT_COLUMNS = {"ImageId", "ClassId", "EncodedPixels"}
 _OUTPUT_COLUMNS = ["image_id", "split", *(f"{name}_rle" for name in CLASS_NAMES)]
 
 
@@ -36,18 +37,28 @@ def build_split_manifest(
 def _read_annotations(csv_path: Path) -> dict[str, dict[str, str | None]]:
     with csv_path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        if reader.fieldnames is None or not _INPUT_COLUMNS.issubset(reader.fieldnames):
-            raise ValueError("CSV must contain ImageId_ClassId and EncodedPixels columns")
+        if reader.fieldnames is None:
+            raise ValueError("CSV has no header")
+        combined_schema = _COMBINED_INPUT_COLUMNS.issubset(reader.fieldnames)
+        separate_schema = _SEPARATE_INPUT_COLUMNS.issubset(reader.fieldnames)
+        if not combined_schema and not separate_schema:
+            raise ValueError("CSV must contain ImageId_ClassId/EncodedPixels or ImageId/ClassId/EncodedPixels columns")
 
         annotations: dict[str, dict[str, str | None]] = {}
         for row in reader:
-            image_and_class = row["ImageId_ClassId"]
-            if not image_and_class or "_" not in image_and_class:
-                raise ValueError(f"Invalid ImageId_ClassId value: {image_and_class!r}")
-            image_id, class_number = image_and_class.rsplit("_", maxsplit=1)
+            if combined_schema:
+                image_and_class = row["ImageId_ClassId"]
+                if not image_and_class or "_" not in image_and_class:
+                    raise ValueError(f"Invalid ImageId_ClassId value: {image_and_class!r}")
+                image_id, class_number = image_and_class.rsplit("_", maxsplit=1)
+            else:
+                image_id = row["ImageId"]
+                class_number = row["ClassId"]
+                if not image_id or not class_number:
+                    raise ValueError("ImageId and ClassId must be non-empty")
             class_name = f"class_{class_number}"
             if class_name not in CLASS_NAMES:
-                raise ValueError(f"Unsupported class in ImageId_ClassId: {image_and_class!r}")
+                raise ValueError(f"Unsupported class number: {class_number!r}")
             image_annotations = annotations.setdefault(image_id, {name: None for name in CLASS_NAMES})
             image_annotations[class_name] = row["EncodedPixels"] or None
     return annotations

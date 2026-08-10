@@ -58,3 +58,26 @@ def test_build_split_manifest_rejects_missing_referenced_images(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="sheet_a.jpg"):
         build_split_manifest(csv_path, image_dir, tmp_path / "splits.csv", seed=7)
+
+
+def test_build_split_manifest_accepts_separate_image_and_class_columns(tmp_path):
+    csv_path = tmp_path / "train.csv"
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    csv_path.write_text(
+        "ImageId,ClassId,EncodedPixels\n"
+        "sheet_a.jpg,1,1 2\n"
+        "sheet_b.jpg,3,\n"
+        "sheet_c.jpg,4,3 1\n",
+        encoding="utf-8",
+    )
+    for name in ("sheet_a.jpg", "sheet_b.jpg", "sheet_c.jpg"):
+        (image_dir / name).touch()
+
+    output_path = tmp_path / "splits.csv"
+    counts = build_split_manifest(csv_path, image_dir, output_path, seed=7)
+
+    assert counts == {"train": 1, "val": 1, "test": 1}
+    with output_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert next(row for row in rows if row["image_id"] == "sheet_a.jpg")["class_1_rle"] == "1 2"
