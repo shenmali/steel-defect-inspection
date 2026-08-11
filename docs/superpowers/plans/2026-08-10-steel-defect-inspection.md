@@ -16,6 +16,7 @@
 - Use four output channels in the fixed order `['class_1', 'class_2', 'class_3', 'class_4']`.
 - Report Dice and IoU overall and per class; report single-image latency, FPS, and peak GPU memory for both backends.
 - Public-facing documentation must state that this benchmark is not validation for a real production line.
+- README and public-facing text must describe this as an individual learning project and must not name companies.
 
 ---
 
