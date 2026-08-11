@@ -102,9 +102,11 @@ docker run --rm --gpus all -p 127.0.0.1:8000:8000 `
 
 ## Local validation evidence
 
-On 2026-08-11, the local GPU preflight found an NVIDIA GeForce RTX 4090 (driver 591.86), PyTorch 2.5.1+cu121 with CUDA available, and TensorRT 11.2.1.2. The TensorRT adapter, backend-selection, and API-contract checks passed with `python -m pytest tests/inference/test_tensorrt.py tests/inference/test_factory.py tests/api/test_predict.py -q` (24 passed).
+On 2026-08-11, local GPU validation used an NVIDIA GeForce RTX 4090 (driver 591.86), PyTorch 2.5.1+cu121 with CUDA available, and TensorRT 11.2.1.2. Benchmarking a real local image against `artifacts/checkpoints/best.pt` and `artifacts/model-fp16.engine` reported PyTorch mean latency 4.998 ms (200.07 FPS; p95 7.051 ms) and FP16 TensorRT mean latency 1.004 ms (995.57 FPS; p95 1.267 ms).
 
-The local worktree did not contain `artifacts/checkpoints/best.pt`, `artifacts/model-fp16.engine`, or a `data/train_images` sample. Therefore no TensorRT benchmark, GPU-container `/health` check, or container `/predict` smoke test was run, and the base Docker image has not been validated for TensorRT serving.
+A direct `TensorRTPredictor` and PyTorch comparison using the same real image, checkpoint, and engine produced masks with equal shapes and agreement of 1.0. The TensorRT adapter, backend-selection, and API-contract checks also passed with `python -m pytest tests/inference/test_tensorrt.py tests/inference/test_factory.py tests/api/test_predict.py -q` (24 passed).
+
+The full Docker image build and GPU-container `/health` and `/predict` smoke tests remain unverified; this evidence does not validate the base Docker image for TensorRT serving.
 
 ## Limitations
 
