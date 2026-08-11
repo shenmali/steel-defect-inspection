@@ -1,12 +1,14 @@
 """FastAPI application exposing one image-segmentation endpoint."""
 
 from contextlib import asynccontextmanager
+from io import BytesIO
 import os
 from pathlib import Path
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from PIL import Image, UnidentifiedImageError
 
 from steel_inspection.api.body_limit import RequestBodyLimitMiddleware
 from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
@@ -16,6 +18,7 @@ from steel_inspection.inference.types import PredictionResult
 
 SUPPORTED_IMAGE_TYPES = frozenset({"image/bmp", "image/jpeg", "image/png", "image/webp"})
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
 RESULTS_DIR = Path("artifacts/results")
 DEFAULT_BACKEND = os.environ.get("STEEL_INSPECTION_BACKEND", "auto")
 DEFAULT_MODEL_PATH = Path(os.environ.get("STEEL_INSPECTION_MODEL", "artifacts/checkpoints/best.pt"))
@@ -73,6 +76,16 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image exceeds 10 MiB") from None
         if not contents:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image upload is empty")
+        try:
+            with Image.open(BytesIO(contents)) as header:
+                width, height = header.size
+        except (UnidentifiedImageError, OSError):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image data is unreadable") from None
+        if width * height > MAX_IMAGE_PIXELS:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Image dimensions exceed the pixel limit",
+            )
         decoded = cv2.imdecode(np.frombuffer(contents, dtype=np.uint8), cv2.IMREAD_COLOR)
         if decoded is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image data is unreadable")

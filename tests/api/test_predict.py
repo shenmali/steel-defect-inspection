@@ -207,6 +207,20 @@ def test_predict_rejects_an_upload_larger_than_limit(client: TestClient, monkeyp
     assert response.status_code == 413
 
 
+def test_predict_rejects_a_valid_image_that_exceeds_the_pixel_limit(
+    client: TestClient, png_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches compressed images that expand beyond the service memory budget."""
+    from steel_inspection.api import main as api
+
+    monkeypatch.setattr(api, "MAX_IMAGE_PIXELS", 4)
+
+    response = client.post("/predict", files={"image": ("large.png", png_bytes, "image/png")})
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Image dimensions exceed the pixel limit"}
+
+
 def test_asgi_request_limit_stops_before_full_multipart_body_is_spooled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

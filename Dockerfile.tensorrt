@@ -1,4 +1,4 @@
-FROM steel-defect-inspection:production-serving
+FROM steel-defect-inspection
 
 RUN python -m pip install --no-cache-dir \
     tensorrt-cu12==11.2.1.2 \
