@@ -35,11 +35,13 @@ The evaluation command emits JSON with overall and per-class Dice/IoU. Train and
 
 ```powershell
 python scripts/export_onnx.py --checkpoint artifacts/checkpoints/best.pt --output artifacts/model.onnx
-python scripts/build_trt.py --onnx artifacts/model.onnx --output artifacts/model-fp16.engine
-python scripts/benchmark.py --checkpoint artifacts/checkpoints/best.pt --image data/train_images/<image-file> --runs 100
+python scripts/build_trt.py --onnx artifacts/model.onnx --output artifacts/model.engine
+python scripts/benchmark.py --checkpoint artifacts/checkpoints/best.pt --image data/train_images/<image-file> --engine artifacts/model.engine --engine artifacts/model-fp16.engine --runs 100
 ```
 
-TensorRT engine creation requires the TensorRT Python bindings. The benchmark performs 20 warm-up runs, then measures 100 single-image inferences and writes `artifacts/benchmarks.json`.
+TensorRT engine creation requires the TensorRT Python bindings. The benchmark performs 20 warm-up runs, then measures 100 GPU-only single-image inferences for PyTorch and every supplied TensorRT engine. It writes a comparable JSON report to `artifacts/benchmarks.json`.
+
+TensorRT 11 engines use the precision encoded in their ONNX graph. Build `model-fp16.engine` from a ModelOpt-converted `model-fp16.onnx`; keep ModelOpt in a separate virtual environment because its current PyTorch requirement may differ from this project's training environment.
 
 ## API
 
