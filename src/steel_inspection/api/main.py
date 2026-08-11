@@ -7,8 +7,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
-from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
+from steel_inspection.api.body_limit import RequestBodyLimitMiddleware
 from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
 from steel_inspection.inference.pytorch import ModelUnavailableError, PyTorchPredictor
 from steel_inspection.inference.types import PredictionResult

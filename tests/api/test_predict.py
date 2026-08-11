@@ -92,6 +92,34 @@ def _post_asgi_in_chunks(app, body: bytes, boundary: bytes, chunk_size: int) -> 
     return int(response_start["status"]), consumed, len(chunks)
 
 
+def test_local_request_body_limiter_stops_reading_before_the_full_body() -> None:
+    """Catches a request limiter that is unavailable under FastAPI's minimum Starlette dependency."""
+    from steel_inspection.api.body_limit import RequestBodyLimitMiddleware
+
+    chunks = [b"abc", b"def", b"ghi"]
+    consumed = 0
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        nonlocal consumed
+        chunk = chunks[consumed]
+        consumed += 1
+        return {"type": "http.request", "body": chunk, "more_body": consumed < len(chunks)}
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    async def downstream(scope, receive, send) -> None:
+        while (message := await receive()).get("more_body", False):
+            pass
+
+    scope = {"type": "http", "headers": []}
+    asyncio.run(RequestBodyLimitMiddleware(downstream, max_body_size=4)(scope, receive, send))
+
+    assert consumed == 2
+    assert sent[0]["status"] == 413
+
+
 @pytest.fixture
 def checkpoint(tmp_path: Path) -> Path:
     """A minimal four-channel checkpoint for exercising the real HTTP path."""
