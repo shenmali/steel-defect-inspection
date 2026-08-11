@@ -3,13 +3,12 @@
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
-from uuid import uuid4
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 
-from steel_inspection.inference.annotate import annotate_mask
+from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
 from steel_inspection.inference.pytorch import ModelUnavailableError, PyTorchPredictor
 from steel_inspection.inference.types import PredictionResult
 
@@ -19,7 +18,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 RESULTS_DIR = Path("artifacts/results")
 
 
-def create_app(model_path: Path, backend: str = "pytorch") -> FastAPI:
+def create_app(model_path: Path, backend: str = "pytorch", save_annotations: bool = False) -> FastAPI:
     """Create a prediction service and load its backend exactly once at startup."""
 
     @asynccontextmanager
@@ -47,7 +46,7 @@ def create_app(model_path: Path, backend: str = "pytorch") -> FastAPI:
 
     @app.post("/predict")
     async def predict(image: UploadFile = File(...)) -> dict[str, object]:
-        """Validate one image upload, segment it, and persist its annotation."""
+        """Validate one image upload and segment it."""
         if app.state.backend_error is not None or app.state.predictor is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -59,35 +58,35 @@ def create_app(model_path: Path, backend: str = "pytorch") -> FastAPI:
                 detail="Upload a PNG, JPEG, WEBP, or BMP image",
             )
 
-        contents = await image.read()
+        try:
+            contents = await read_limited_upload(image, MAX_UPLOAD_BYTES)
+        except UploadTooLargeError:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image exceeds 10 MiB") from None
         if not contents:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image upload is empty")
-        if len(contents) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image exceeds 10 MiB")
         decoded = cv2.imdecode(np.frombuffer(contents, dtype=np.uint8), cv2.IMREAD_COLOR)
         if decoded is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image data is unreadable")
 
         result = app.state.predictor.predict(decoded)
-        annotated_path = _store_annotation(decoded, result)
+        try:
+            annotated_path = store_annotation(
+                decoded,
+                result,
+                results_dir=RESULTS_DIR,
+                enabled=save_annotations,
+            )
+        except AnnotationStorageError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to store annotated image",
+            ) from None
         return _response_payload(result, annotated_path)
 
     return app
 
 
-def _store_annotation(source_bgr: np.ndarray, result: PredictionResult) -> Path:
-    """Encode the annotated result into the predictable local results directory."""
-    annotated = annotate_mask(source_bgr, result.mask)
-    success, encoded = cv2.imencode(".png", annotated)
-    if not success:
-        raise RuntimeError("Unable to encode annotated PNG")
-    path = RESULTS_DIR / f"{uuid4()}.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(encoded.tobytes())
-    return path
-
-
-def _response_payload(result: PredictionResult, annotated_path: Path) -> dict[str, object]:
+def _response_payload(result: PredictionResult, annotated_path: Path | None) -> dict[str, object]:
     """Translate inference domain objects into the public JSON contract."""
     return {
         "has_defect": result.has_defect,
@@ -101,7 +100,7 @@ def _response_payload(result: PredictionResult, annotated_path: Path) -> dict[st
         ],
         "latency_ms": result.latency_ms,
         "backend": result.backend,
-        "annotated_image": annotated_path.as_posix(),
+        "annotated_image": annotated_path.as_posix() if annotated_path is not None else None,
     }
 
 
