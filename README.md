@@ -85,16 +85,30 @@ docker run --rm --gpus all -p 127.0.0.1:8000:8000 `
   steel-defect-inspection
 ```
 
-For GPU TensorRT `auto`, first build an **internal derivative image** that includes the TensorRT runtime matching the engine and GPU driver, then smoke-test it with a real engine. Only then run it with read-only model and engine mounts:
+For GPU TensorRT `auto`, build the internal derivative image. It pins the CUDA 12 TensorRT 11.2.1.2 runtime used for the checked-in deployment configuration; rebuild the engine when changing TensorRT, GPU architecture, or CUDA compatibility.
+
+```powershell
+docker build -f Dockerfile.tensorrt -t steel-defect-inspection-tensorrt .
+```
+
+TensorRT engines are platform-specific. Build the deployment engine inside the same Linux TensorRT image rather than mounting an engine produced on Windows:
+
+```powershell
+docker run --rm --gpus all -v "${PWD}:/workspace" -w /workspace --entrypoint python `
+  steel-defect-inspection-tensorrt scripts/build_trt.py `
+  --onnx artifacts/model-fp16.onnx --output artifacts/model-fp16-linux.engine
+```
+
+Then smoke-test it with the real engine before deployment. Run it with read-only model and engine mounts:
 
 ```powershell
 docker run --rm --gpus all -p 127.0.0.1:8000:8000 `
   -e STEEL_INSPECTION_BACKEND=auto `
   -e STEEL_INSPECTION_MODEL=/models/best.pt `
-  -e STEEL_INSPECTION_ENGINE=/models/model-fp16.engine `
+  -e STEEL_INSPECTION_ENGINE=/models/model-fp16-linux.engine `
   -e STEEL_INSPECTION_SAVE_ANNOTATIONS=false `
   -v ${PWD}/artifacts/checkpoints/best.pt:/models/best.pt:ro `
-  -v ${PWD}/artifacts/model-fp16.engine:/models/model-fp16.engine:ro `
+  -v ${PWD}/artifacts/model-fp16-linux.engine:/models/model-fp16-linux.engine:ro `
   steel-defect-inspection-tensorrt
 ```
 
@@ -106,7 +120,7 @@ On 2026-08-11, local GPU validation used an NVIDIA GeForce RTX 4090 (driver 591.
 
 A direct `TensorRTPredictor` and PyTorch comparison using the same real image, checkpoint, and engine produced masks with equal shapes and agreement of 1.0. The TensorRT adapter, backend-selection, and API-contract checks also passed with `python -m pytest tests/inference/test_tensorrt.py tests/inference/test_factory.py tests/api/test_predict.py -q` (24 passed).
 
-On the same host, the PyTorch base image was rebuilt successfully and a GPU container smoke test passed: `GET /health` returned `{"status":"ok"}` and `POST /predict` on a real Severstal image returned a PyTorch result with `annotated_image: null`. The base image still does not validate TensorRT container serving; that requires the separately built derivative image described above and a real-engine smoke test.
+On the same host, the PyTorch base image was rebuilt successfully and a GPU container smoke test passed: `GET /health` returned `{"status":"ok"}` and `POST /predict` on a real Severstal image returned a PyTorch result with `annotated_image: null`. The TensorRT derivative image was also built successfully. A Windows-built engine was rejected as expected by its platform tag; after rebuilding it inside the Linux image, an explicit `tensorrt` backend container returned `{"status":"ok"}` and a real-image `POST /predict` returned `backend: "tensorrt"` with `annotated_image: null`.
 
 ## Limitations
 

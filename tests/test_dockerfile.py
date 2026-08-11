@@ -6,3 +6,11 @@ def test_dockerfile_installs_opencv_runtime_libraries() -> None:
 
     assert "libgl1" in dockerfile
     assert "libglib2.0-0" in dockerfile
+
+
+def test_tensorrt_dockerfile_pins_the_engine_runtime() -> None:
+    dockerfile = (Path(__file__).parents[1] / "Dockerfile.tensorrt").read_text(encoding="utf-8")
+
+    assert "FROM steel-defect-inspection:production-serving" in dockerfile
+    assert "tensorrt-cu12==11.2.1.2" in dockerfile
+    assert "cuda-python==13.3.1" in dockerfile
