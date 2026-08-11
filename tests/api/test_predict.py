@@ -411,3 +411,19 @@ def test_predict_reports_unavailable_model_as_service_unavailable(tmp_path: Path
         )
 
     assert response.status_code == 503
+
+
+def test_explicit_unavailable_tensorrt_marks_health_unready(tmp_path: Path) -> None:
+    """Catches explicit TensorRT selection silently falling back to PyTorch."""
+    from steel_inspection.api.main import create_app
+
+    with TestClient(
+        create_app(
+            tmp_path / "model.pt",
+            backend="tensorrt",
+            engine_path=tmp_path / "missing.engine",
+        )
+    ) as unavailable_client:
+        response = unavailable_client.get("/health")
+
+    assert response.status_code == 503

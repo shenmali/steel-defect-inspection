@@ -10,16 +10,25 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, status
 
 from steel_inspection.api.body_limit import RequestBodyLimitMiddleware
 from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
-from steel_inspection.inference.pytorch import ModelUnavailableError, PyTorchPredictor
+from steel_inspection.inference import ModelUnavailableError, create_predictor
 from steel_inspection.inference.types import PredictionResult
 
 
 SUPPORTED_IMAGE_TYPES = frozenset({"image/bmp", "image/jpeg", "image/png", "image/webp"})
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 RESULTS_DIR = Path("artifacts/results")
+DEFAULT_BACKEND = os.environ.get("STEEL_INSPECTION_BACKEND", "auto")
+DEFAULT_MODEL_PATH = Path(os.environ.get("STEEL_INSPECTION_MODEL", "artifacts/checkpoints/best.pt"))
+DEFAULT_ENGINE_PATH = Path(os.environ.get("STEEL_INSPECTION_ENGINE", "artifacts/model-fp16.engine"))
+DEFAULT_SAVE_ANNOTATIONS = os.environ.get("STEEL_INSPECTION_SAVE_ANNOTATIONS", "false").lower() == "true"
 
 
-def create_app(model_path: Path, backend: str = "pytorch", save_annotations: bool = False) -> FastAPI:
+def create_app(
+    model_path: Path,
+    backend: str = "auto",
+    engine_path: Path = DEFAULT_ENGINE_PATH,
+    save_annotations: bool = False,
+) -> FastAPI:
     """Create a prediction service and load its backend exactly once at startup."""
 
     @asynccontextmanager
@@ -27,9 +36,7 @@ def create_app(model_path: Path, backend: str = "pytorch", save_annotations: boo
         app.state.predictor = None
         app.state.backend_error = None
         try:
-            if backend != "pytorch":
-                raise ModelUnavailableError(f"Inference backend is unavailable: {backend}")
-            app.state.predictor = PyTorchPredictor(Path(model_path))
+            app.state.predictor = create_predictor(backend, Path(model_path), Path(engine_path))
         except ModelUnavailableError as error:
             app.state.backend_error = str(error)
         yield
@@ -106,4 +113,9 @@ def _response_payload(result: PredictionResult, annotated_path: Path | None) -> 
     }
 
 
-app = create_app(Path(os.environ.get("STEEL_INSPECTION_MODEL", "artifacts/checkpoints/best.pt")))
+app = create_app(
+    DEFAULT_MODEL_PATH,
+    backend=DEFAULT_BACKEND,
+    engine_path=DEFAULT_ENGINE_PATH,
+    save_annotations=DEFAULT_SAVE_ANNOTATIONS,
+)

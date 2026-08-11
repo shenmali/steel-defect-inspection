@@ -48,7 +48,10 @@ TensorRT 11 engines use the precision encoded in their ONNX graph. Build `model-
 Start the API after a trained checkpoint exists:
 
 ```powershell
+$env:STEEL_INSPECTION_BACKEND='auto' # auto, tensorrt, or pytorch
 $env:STEEL_INSPECTION_MODEL='artifacts/checkpoints/best.pt'
+$env:STEEL_INSPECTION_ENGINE='artifacts/model-fp16.engine'
+$env:STEEL_INSPECTION_SAVE_ANNOTATIONS='false'
 python -m uvicorn steel_inspection.api.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -59,16 +62,43 @@ $imagePath = (Get-ChildItem . -Filter *.png -File | Select-Object -First 1).Full
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/predict -Form @{ image = Get-Item $imagePath }
 ```
 
-`POST /predict` accepts PNG, JPEG, WEBP, and BMP images up to 10 MiB. It returns detected classes, coverage, inference latency, and the path to an annotated PNG. `GET /health` returns 200 only when the model backend is ready.
+`POST /predict` accepts PNG, JPEG, WEBP, and BMP images up to 10 MiB. It returns detected classes, coverage, inference latency, and the path to an annotated PNG. `GET /health` returns 200 only when the model backend is ready. Configuration is read once when the process imports the API module: `auto` tries the configured TensorRT engine and falls back to PyTorch at startup only; `tensorrt` never falls back and reports an unready 503 when unavailable; `pytorch` loads only the checkpoint. Annotation retention is disabled unless `STEEL_INSPECTION_SAVE_ANNOTATIONS=true`.
 
 ## Docker
 
-Build and run with GPU access, mounting local model artifacts read/write for generated annotations:
+The base image is a PyTorch-serving image; it does **not** install TensorRT. It is suitable for the PyTorch-only internal deployment below. Do not expose this service directly to the internet: keep it on an internal factory network and restrict ingress with the host firewall or a reverse proxy.
+
+Build the image:
 
 ```powershell
 docker build -t steel-defect-inspection .
-docker run --rm --gpus all -p 8000:8000 -v ${PWD}/artifacts:/app/artifacts steel-defect-inspection
 ```
+
+Run PyTorch-only with a read-only checkpoint mount and annotation persistence disabled:
+
+```powershell
+docker run --rm -p 127.0.0.1:8000:8000 `
+  -e STEEL_INSPECTION_BACKEND=pytorch `
+  -e STEEL_INSPECTION_MODEL=/models/best.pt `
+  -e STEEL_INSPECTION_SAVE_ANNOTATIONS=false `
+  -v ${PWD}/artifacts/checkpoints/best.pt:/models/best.pt:ro `
+  steel-defect-inspection
+```
+
+For GPU TensorRT `auto`, first build an **internal derivative image** that includes the TensorRT runtime matching the engine and GPU driver, then smoke-test it with a real engine. Only then run it with read-only model and engine mounts:
+
+```powershell
+docker run --rm --gpus all -p 127.0.0.1:8000:8000 `
+  -e STEEL_INSPECTION_BACKEND=auto `
+  -e STEEL_INSPECTION_MODEL=/models/best.pt `
+  -e STEEL_INSPECTION_ENGINE=/models/model-fp16.engine `
+  -e STEEL_INSPECTION_SAVE_ANNOTATIONS=false `
+  -v ${PWD}/artifacts/checkpoints/best.pt:/models/best.pt:ro `
+  -v ${PWD}/artifacts/model-fp16.engine:/models/model-fp16.engine:ro `
+  steel-defect-inspection-tensorrt
+```
+
+`auto` falls back to PyTorch during startup if TensorRT cannot load. Use `STEEL_INSPECTION_BACKEND=tensorrt` when the deployment must fail readiness instead of accepting that fallback.
 
 ## Limitations
 
