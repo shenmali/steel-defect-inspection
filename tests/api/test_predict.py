@@ -3,7 +3,9 @@
 import asyncio
 import importlib
 import os
+import struct
 import subprocess
+import zlib
 from datetime import timedelta
 from pathlib import Path
 
@@ -52,6 +54,21 @@ def _multipart_body(payload: bytes, boundary: bytes = b"streaming-boundary") -> 
         + b"\r\n--"
         + boundary
         + b"--\r\n"
+    )
+
+
+def _png_header(width: int, height: int) -> bytes:
+    """Return a minimal PNG whose dimensions are available without decoding pixels."""
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    chunk = b"IHDR" + header
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", len(header))
+        + chunk
+        + struct.pack(">I", zlib.crc32(chunk))
+        + struct.pack(">I", 0)
+        + b"IEND"
+        + struct.pack(">I", zlib.crc32(b"IEND"))
     )
 
 
@@ -216,6 +233,19 @@ def test_predict_rejects_a_valid_image_that_exceeds_the_pixel_limit(
     monkeypatch.setattr(api, "MAX_IMAGE_PIXELS", 4)
 
     response = client.post("/predict", files={"image": ("large.png", png_bytes, "image/png")})
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Image dimensions exceed the pixel limit"}
+
+
+def test_predict_converts_pillow_decompression_bombs_to_a_pixel_limit_error(
+    annotating_client: TestClient,
+) -> None:
+    """Catches Pillow's own image-size guard escaping as an internal server error."""
+    response = annotating_client.post(
+        "/predict",
+        files={"image": ("bomb.png", _png_header(100_000, 100_000), "image/png")},
+    )
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Image dimensions exceed the pixel limit"}

@@ -79,6 +79,11 @@ def create_app(
         try:
             with Image.open(BytesIO(contents)) as header:
                 width, height = header.size
+        except Image.DecompressionBombError:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Image dimensions exceed the pixel limit",
+            ) from None
         except (UnidentifiedImageError, OSError):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Image data is unreadable") from None
         if width * height > MAX_IMAGE_PIXELS:
