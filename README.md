@@ -77,7 +77,7 @@ docker build -t steel-defect-inspection .
 Run PyTorch-only with a read-only checkpoint mount and annotation persistence disabled:
 
 ```powershell
-docker run --rm -p 127.0.0.1:8000:8000 `
+docker run --rm --gpus all -p 127.0.0.1:8000:8000 `
   -e STEEL_INSPECTION_BACKEND=pytorch `
   -e STEEL_INSPECTION_MODEL=/models/best.pt `
   -e STEEL_INSPECTION_SAVE_ANNOTATIONS=false `
@@ -106,7 +106,7 @@ On 2026-08-11, local GPU validation used an NVIDIA GeForce RTX 4090 (driver 591.
 
 A direct `TensorRTPredictor` and PyTorch comparison using the same real image, checkpoint, and engine produced masks with equal shapes and agreement of 1.0. The TensorRT adapter, backend-selection, and API-contract checks also passed with `python -m pytest tests/inference/test_tensorrt.py tests/inference/test_factory.py tests/api/test_predict.py -q` (24 passed).
 
-The full Docker image build and GPU-container `/health` and `/predict` smoke tests remain unverified; this evidence does not validate the base Docker image for TensorRT serving.
+On the same host, the PyTorch base image was rebuilt successfully and a GPU container smoke test passed: `GET /health` returned `{"status":"ok"}` and `POST /predict` on a real Severstal image returned a PyTorch result with `annotated_image: null`. The base image still does not validate TensorRT container serving; that requires the separately built derivative image described above and a real-engine smoke test.
 
 ## Limitations
 

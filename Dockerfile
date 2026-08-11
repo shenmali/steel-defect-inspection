@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 
 WORKDIR /app
 COPY requirements.txt pyproject.toml ./
 COPY src ./src
+RUN apt-get update && apt-get install --yes --no-install-recommends libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --no-cache-dir --upgrade pip && python -m pip install --no-cache-dir -r requirements.txt && python -m pip install --no-cache-dir .
 RUN useradd --create-home --uid 10001 appuser && mkdir -p /app/artifacts/results && chown -R appuser:appuser /app
 USER appuser
