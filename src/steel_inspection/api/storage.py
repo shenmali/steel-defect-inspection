@@ -16,6 +16,7 @@ from steel_inspection.inference.types import PredictionResult
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 ANNOTATION_TTL = timedelta(hours=24)
 MAX_ANNOTATION_BYTES = 1024 * 1024 * 1024
+TRUSTED_RESULTS_DIR = Path("artifacts/results")
 
 
 class UploadTooLargeError(ValueError):
@@ -56,6 +57,8 @@ def store_annotation(
     if not success:
         raise AnnotationStorageError("Unable to encode annotated PNG")
     png_bytes = encoded.tobytes()
+    if maximum_total_bytes < 0 or len(png_bytes) > maximum_total_bytes:
+        raise AnnotationStorageError("Annotated PNG exceeds the configured retention capacity")
 
     try:
         resolved_results_dir = _resolve_results_dir(results_dir)
@@ -70,12 +73,30 @@ def store_annotation(
 
 
 def _resolve_results_dir(results_dir: Path) -> Path:
-    """Create and resolve the single directory allowed to hold retained annotations."""
-    results_dir.mkdir(parents=True, exist_ok=True)
-    resolved = results_dir.resolve(strict=True)
-    if not resolved.is_dir():
+    """Return the non-symlinked, process-local directory allowed to hold annotations."""
+    trusted_results_dir = Path.cwd() / TRUSTED_RESULTS_DIR
+    configured_results_dir = Path(results_dir)
+    if configured_results_dir.is_absolute():
+        is_trusted_path = configured_results_dir == trusted_results_dir
+    else:
+        is_trusted_path = configured_results_dir == TRUSTED_RESULTS_DIR
+    if not is_trusted_path:
+        raise AnnotationStorageError("Annotation results path is not trusted")
+
+    trusted_parent = trusted_results_dir.parent
+    if trusted_parent.is_symlink() or trusted_results_dir.is_symlink():
+        raise AnnotationStorageError("Annotation results path must not be a symlink")
+    trusted_parent.mkdir(parents=True, exist_ok=True)
+    if trusted_parent.is_symlink() or trusted_parent.resolve(strict=True) != trusted_parent:
+        raise AnnotationStorageError("Annotation results path must not be redirected")
+    if trusted_results_dir.is_symlink():
+        raise AnnotationStorageError("Annotation results path must not be a symlink")
+    trusted_results_dir.mkdir(exist_ok=True)
+    if not trusted_results_dir.is_dir():
         raise OSError("Annotation results path is not a directory")
-    return resolved
+    if trusted_results_dir.resolve(strict=True) != trusted_results_dir:
+        raise AnnotationStorageError("Annotation results path must not be redirected")
+    return trusted_results_dir
 
 
 def _regular_png_files(results_dir: Path) -> list[Path]:
@@ -100,7 +121,7 @@ def _purge_expired_pngs(results_dir: Path, ttl: timedelta) -> None:
 
 def _make_room_for_png(results_dir: Path, incoming_size: int, maximum_total_bytes: int) -> None:
     """Trim oldest regular PNGs until the incoming annotation fits the total cap."""
-    if maximum_total_bytes < 0:
+    if maximum_total_bytes < 0 or incoming_size > maximum_total_bytes:
         raise ValueError("Annotation capacity must not be negative")
 
     files = _regular_png_files(results_dir)

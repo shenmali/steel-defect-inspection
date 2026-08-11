@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
 from steel_inspection.inference.pytorch import ModelUnavailableError, PyTorchPredictor
@@ -34,6 +35,7 @@ def create_app(model_path: Path, backend: str = "pytorch", save_annotations: boo
         yield
 
     app = FastAPI(title="Steel Defect Inspection API", lifespan=lifespan)
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_UPLOAD_BYTES)
     app.state.predictor = None
     app.state.backend_error = None
 

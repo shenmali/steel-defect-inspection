@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from steel_inspection.api.storage import UploadTooLargeError, read_limited_upload, store_annotation
+from steel_inspection.api.storage import AnnotationStorageError, UploadTooLargeError, read_limited_upload, store_annotation
 from steel_inspection.inference.types import PredictionResult
 
 
@@ -27,6 +28,68 @@ class _BoundedReadUpload:
             raise AssertionError(f"Upload read was not bounded: {size}")
         chunk, self._body = self._body[:size], self._body[size:]
         return chunk
+
+
+def _prediction_result() -> PredictionResult:
+    """Return a small annotation-ready inference result."""
+    return PredictionResult(
+        has_defect=False,
+        defects=[],
+        latency_ms=0.0,
+        backend="pytorch",
+        mask=np.zeros((4, 4, 4), dtype=np.uint8),
+    )
+
+
+def _multipart_body(payload: bytes, boundary: bytes = b"streaming-boundary") -> bytes:
+    """Create a small single-file multipart body for direct ASGI tests."""
+    return (
+        b"--" + boundary + b"\r\n"
+        b'Content-Disposition: form-data; name="image"; filename="sheet.png"\r\n'
+        b"Content-Type: image/png\r\n\r\n"
+        + payload
+        + b"\r\n--"
+        + boundary
+        + b"--\r\n"
+    )
+
+
+def _post_asgi_in_chunks(app, body: bytes, boundary: bytes, chunk_size: int) -> tuple[int, int, int]:
+    """Post a multipart body directly to ASGI and count body chunks consumed by the app."""
+    chunks = [body[index : index + chunk_size] for index in range(0, len(body), chunk_size)]
+    consumed = 0
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        nonlocal consumed
+        if consumed == len(chunks):
+            return {"type": "http.disconnect"}
+        body_chunk = chunks[consumed]
+        consumed += 1
+        return {"type": "http.request", "body": body_chunk, "more_body": consumed < len(chunks)}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/predict",
+        "raw_path": b"/predict",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"multipart/form-data; boundary=" + boundary)],
+        "client": ("127.0.0.1", 1234),
+        "server": ("testserver", 80),
+    }
+
+    asyncio.run(app(scope, receive, send))
+
+    response_start = next(message for message in messages if message["type"] == "http.response.start")
+    return int(response_start["status"]), consumed, len(chunks)
 
 
 @pytest.fixture
@@ -115,6 +178,24 @@ def test_predict_rejects_an_upload_larger_than_limit(client: TestClient, monkeyp
     assert response.status_code == 413
 
 
+def test_asgi_request_limit_stops_before_full_multipart_body_is_spooled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches request caps that run only after FastAPI has parsed every multipart chunk."""
+    from steel_inspection.api import main as api
+
+    monkeypatch.setattr(api, "MAX_UPLOAD_BYTES", 100)
+    boundary = b"streaming-boundary"
+    body = _multipart_body(b"x" * 256, boundary)
+
+    status_code, consumed, total_chunks = _post_asgi_in_chunks(
+        api.create_app(tmp_path / "missing.pt"), body, boundary, chunk_size=24
+    )
+
+    assert status_code == 413
+    assert consumed < total_chunks
+
+
 def test_read_limited_upload_rejects_before_an_unbounded_body_read() -> None:
     """Catches a reader that calls UploadFile.read() without a bounded chunk size."""
     upload = _BoundedReadUpload(b"12345", maximum_read_size=5)
@@ -123,9 +204,12 @@ def test_read_limited_upload_rejects_before_an_unbounded_body_read() -> None:
         asyncio.run(read_limited_upload(upload, limit=4))
 
 
-def test_store_annotation_removes_expired_pngs_and_trims_png_capacity(tmp_path: Path) -> None:
+def test_store_annotation_removes_expired_pngs_and_trims_png_capacity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Catches retention that leaves expired data, exceeds capacity, or deletes non-PNG files."""
-    results_dir = tmp_path / "artifacts/results"
+    monkeypatch.chdir(tmp_path)
+    results_dir = Path("artifacts/results")
     results_dir.mkdir(parents=True)
     expired = results_dir / "expired.png"
     expired.write_bytes(b"expired")
@@ -136,13 +220,7 @@ def test_store_annotation_removes_expired_pngs_and_trims_png_capacity(tmp_path: 
     unrelated = results_dir / "keep.txt"
     unrelated.write_bytes(b"do not delete")
     source = np.zeros((4, 4, 3), dtype=np.uint8)
-    result = PredictionResult(
-        has_defect=False,
-        defects=[],
-        latency_ms=0.0,
-        backend="pytorch",
-        mask=np.zeros((4, 4, 4), dtype=np.uint8),
-    )
+    result = _prediction_result()
 
     saved = store_annotation(
         source,
@@ -158,6 +236,113 @@ def test_store_annotation_removes_expired_pngs_and_trims_png_capacity(tmp_path: 
     assert not oversized_existing.exists()
     assert unrelated.read_bytes() == b"do not delete"
     assert sum(path.stat().st_size for path in results_dir.glob("*.png")) <= 1024
+
+
+def test_store_annotation_rejects_noncanonical_directory_before_cleanup(tmp_path: Path) -> None:
+    """Catches retention that can delete files from a caller-controlled results directory."""
+    untrusted_results_dir = tmp_path / "outside-results"
+    untrusted_results_dir.mkdir()
+    retained = untrusted_results_dir / "retained.png"
+    retained.write_bytes(b"x" * 950)
+
+    with pytest.raises(AnnotationStorageError):
+        store_annotation(
+            np.zeros((4, 4, 3), dtype=np.uint8),
+            _prediction_result(),
+            results_dir=untrusted_results_dir,
+            enabled=True,
+            maximum_total_bytes=1,
+        )
+
+    assert retained.is_file()
+
+
+def test_store_annotation_rejects_results_symlink_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches retention that follows artifacts/results links to delete another directory's files."""
+    target = tmp_path / "redirected-results"
+    target.mkdir()
+    retained = target / "retained.png"
+    retained.write_bytes(b"x" * 950)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    try:
+        (artifacts / "results").symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        junction = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(artifacts / "results"), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if junction.returncode != 0:
+            pytest.skip(f"Symlinks and junctions are unavailable in this test environment: {error}")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(AnnotationStorageError):
+        store_annotation(
+            np.zeros((4, 4, 3), dtype=np.uint8),
+            _prediction_result(),
+            results_dir=Path("artifacts/results"),
+            enabled=True,
+            maximum_total_bytes=1,
+        )
+
+    assert retained.is_file()
+
+
+def test_store_annotation_rejects_redirected_artifacts_parent_before_creating_results_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches retention that creates artifacts/results through a redirected artifacts parent."""
+    target = tmp_path / "redirected-artifacts"
+    target.mkdir()
+    artifacts = tmp_path / "artifacts"
+    try:
+        artifacts.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        junction = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(artifacts), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if junction.returncode != 0:
+            pytest.skip(f"Symlinks and junctions are unavailable in this test environment: {error}")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(AnnotationStorageError):
+        store_annotation(
+            np.zeros((4, 4, 3), dtype=np.uint8),
+            _prediction_result(),
+            results_dir=Path("artifacts/results"),
+            enabled=True,
+        )
+
+    assert not (target / "results").exists()
+
+
+def test_store_annotation_rejects_an_oversized_new_png_before_deleting_existing_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches capacity handling that deletes retained annotations before rejecting an oversized new one."""
+    monkeypatch.chdir(tmp_path)
+    results_dir = Path("artifacts/results")
+    results_dir.mkdir(parents=True)
+    retained = results_dir / "retained.png"
+    retained.write_bytes(b"retained")
+
+    with pytest.raises(AnnotationStorageError):
+        store_annotation(
+            np.zeros((4, 4, 3), dtype=np.uint8),
+            _prediction_result(),
+            results_dir=results_dir,
+            enabled=True,
+            maximum_total_bytes=1,
+        )
+
+    assert retained.is_file()
 
 
 def test_predict_hides_annotation_write_failures(
