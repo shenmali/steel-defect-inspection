@@ -1,6 +1,7 @@
 """Behavioral tests for the prediction HTTP contract."""
 
 import asyncio
+import importlib
 import os
 import subprocess
 from datetime import timedelta
@@ -427,3 +428,23 @@ def test_explicit_unavailable_tensorrt_marks_health_unready(tmp_path: Path) -> N
         response = unavailable_client.get("/health")
 
     assert response.status_code == 503
+
+
+def test_module_configuration_reads_environment_at_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches module defaults that ignore the documented serving environment variables."""
+    from steel_inspection.api import main as api
+
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv("STEEL_INSPECTION_BACKEND", "tensorrt")
+            environment.setenv("STEEL_INSPECTION_MODEL", "models/configured.pt")
+            environment.setenv("STEEL_INSPECTION_ENGINE", "engines/configured.engine")
+            environment.setenv("STEEL_INSPECTION_SAVE_ANNOTATIONS", "TRUE")
+            configured_api = importlib.reload(api)
+
+            assert configured_api.DEFAULT_BACKEND == "tensorrt"
+            assert configured_api.DEFAULT_MODEL_PATH == Path("models/configured.pt")
+            assert configured_api.DEFAULT_ENGINE_PATH == Path("engines/configured.engine")
+            assert configured_api.DEFAULT_SAVE_ANNOTATIONS is True
+    finally:
+        importlib.reload(api)

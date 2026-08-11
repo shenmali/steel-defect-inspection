@@ -62,7 +62,7 @@ $imagePath = (Get-ChildItem . -Filter *.png -File | Select-Object -First 1).Full
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/predict -Form @{ image = Get-Item $imagePath }
 ```
 
-`POST /predict` accepts PNG, JPEG, WEBP, and BMP images up to 10 MiB. It returns detected classes, coverage, inference latency, and the path to an annotated PNG. `GET /health` returns 200 only when the model backend is ready. Configuration is read once when the process imports the API module: `auto` tries the configured TensorRT engine and falls back to PyTorch at startup only; `tensorrt` never falls back and reports an unready 503 when unavailable; `pytorch` loads only the checkpoint. Annotation retention is disabled unless `STEEL_INSPECTION_SAVE_ANNOTATIONS=true`.
+`POST /predict` accepts PNG, JPEG, WEBP, and BMP images up to 10 MiB. It returns detected classes, coverage, inference latency, and `annotated_image`, which is `null` by default. `annotated_image` contains a saved PNG path only when `STEEL_INSPECTION_SAVE_ANNOTATIONS=true`. `GET /health` returns 200 only when the model backend is ready. Configuration is read once when the process imports the API module: `auto` tries the configured TensorRT engine and falls back to PyTorch at startup only; `tensorrt` never falls back and reports an unready 503 when unavailable; `pytorch` loads only the checkpoint.
 
 ## Docker
 
